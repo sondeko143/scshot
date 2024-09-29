@@ -1,0 +1,41 @@
+[project]
+name = "scshot"
+version = "0.1.0"
+description = "Take a screenshot and translate texts"
+authors = [
+    { name = "sumirodon", email = "sondeko143@gmail.com" }
+]
+dependencies = [
+    "bettercam>=1.0.0",
+    "pyyaml>=6.0.2",
+    "pywin32>=306",
+    "opencv-python>=4.10.0.84",
+    "pillow>=10.4.0",
+    "google-cloud-vision>=3.7.4",
+    "google-cloud-translate>=3.16.0",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[project.scripts]
+"scshot" = "scshot:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "bettercam>=1.0.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scshot"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+useLibraryCodeForTypes = true

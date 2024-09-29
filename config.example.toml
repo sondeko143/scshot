@@ -1,0 +1,21 @@
+text_ignore = [
+    "some ui element"
+]
+
+target_window_title = "Game.exe"
+
+# ISO 639-1
+target_language_code = "ja-JP"
+
+# ISO 639-1
+language_codes_display = ["zh-CN"]
+
+language_codes_ignore = ["en", "ja"]
+
+display_code = '''
+clear()
+for result in results:
+    print(f"{result.original}\n->{result.translated}\n")
+'''
+
+google_translate_api_project_name = "projects/project-id"
