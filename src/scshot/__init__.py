@@ -1,11 +1,12 @@
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+import logging
+import sys
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from html import unescape
 from io import BytesIO
-from itertools import repeat
+from logging import getLogger
 from os import system
-from threading import Event
 from typing import Any, cast
 
 import bettercam  # type: ignore
@@ -16,6 +17,12 @@ from google.cloud.translate_v3 import TranslateTextRequest, TranslationServiceCl
 from PIL import Image
 
 TRANSLATION_CACHE: dict[str, str] = {}
+
+logger = getLogger(__name__)
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.DEBUG)
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 
 @dataclass
@@ -39,7 +46,8 @@ class Output:
     bottom: int
 
 
-def translate_text(target: str, text: str, settings: Settings, signal: Event):
+def translate_text(text: str, settings: Settings):
+    logger.debug("start thread: %s", text)
     if text in settings.text_ignore:
         return [text, ""]
     if text.isdigit():
@@ -49,38 +57,54 @@ def translate_text(target: str, text: str, settings: Settings, signal: Event):
 
     client = TranslationServiceClient()
     request = TranslateTextRequest(
-        contents=[text], target_language_code=target, parent=settings.google_translate_api_project_name
+        contents=[text],
+        target_language_code=settings.target_language_code,
+        parent=settings.google_translate_api_project_name,
     )
-    if signal.is_set():
-        return [text, ""]
     try:
+        logger.debug("request translation: %s", text)
         result = client.translate_text(request=request)  # type: ignore
-    except KeyboardInterrupt:
-        signal.set()
+    except CancelledError:
+        logger.debug("canceled")
         return [text, ""]
     result = result.translations[0]
     dlc = result.detected_language_code
+    translated = cast(str, unescape(result.translated_text))  # type: ignore
+    logger.debug("translated: [%s] %s", dlc, translated)
     if dlc in settings.language_codes_display:
-        translated = cast(str, unescape(result.translated_text))  # type: ignore
         TRANSLATION_CACHE[text] = translated
         return [text, translated]
     TRANSLATION_CACHE[text] = ""
     return [text, ""]
 
 
-def bulk_translate(texts: list[str], settings: Settings, signal: Event):
+def bulk_translate(texts: list[str], settings: Settings):
     with ThreadPoolExecutor() as executor:
-        results = executor.map(
-            translate_text,
-            repeat(settings.target_language_code),
-            texts,
-            repeat(settings),
-            repeat(signal),
-        )
+        futures: list[Future[list[str]]] = []
+        try:
+            futures = [
+                executor.submit(
+                    translate_text,
+                    text,
+                    settings,
+                )
+                for text in texts
+            ]
+            results = [future.result() for future in futures]
+        except KeyboardInterrupt:
+            logger.debug("interrupted executor")
+            for future in futures:
+                logger.debug("cancel future %s", future)
+                future.cancel()
+            executor.shutdown()
+            for thread in executor._threads:
+                logger.debug("join thread %s", thread)
+                thread.join()
+            raise
     return [{"original": t, "translated": translated} for t, translated in results]
 
 
-def detect_text(image: bytes, settings: Settings, signal: Event) -> list[Output]:
+def detect_text(image: bytes, settings: Settings) -> list[Output]:
     """Detects text in the file."""
 
     client = vision.ImageAnnotatorClient()
@@ -114,8 +138,8 @@ def detect_text(image: bytes, settings: Settings, signal: Event) -> list[Output]
                 bottom = max(ys)
                 bounds[block_text] = [left, top, right, bottom]
                 block_texts.append(block_text)
-    print(f"detect {len(block_texts)}")
-    translateds = bulk_translate(block_texts, settings=settings, signal=signal)
+    logger.debug("detect %s", len(block_texts))
+    translateds = bulk_translate(block_texts, settings=settings)
     translateds = [t for t in translateds if t["translated"]]
     outputs = [
         Output(
@@ -144,7 +168,7 @@ def display_results(results: list[Output], display_code: str):
     )
 
 
-def translate_window(hwnd: int, settings: Settings, signal: Event):
+def translate_window(hwnd: int, settings: Settings):
     camera = bettercam.create()  # type: ignore
     rect = win32gui.GetWindowRect(hwnd)
     frame = camera.grab(rect)  # type: ignore
@@ -153,9 +177,7 @@ def translate_window(hwnd: int, settings: Settings, signal: Event):
     image = Image.fromarray(frame)  # type: ignore
     with BytesIO() as image_content:
         image.save(image_content, format="PNG")
-        results = detect_text(
-            image_content.getvalue(), settings=settings, signal=signal
-        )
+        results = detect_text(image_content.getvalue(), settings=settings)
     display_results(results, settings.display_code)
 
 
@@ -164,13 +186,15 @@ def main() -> int:
         prog="scshot", description="Take a screenshot and translate texts"
     )
     parser.add_argument("-c", "--config", required=True)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("-l", "--loop", action="store_true")
     args = parser.parse_args()
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
     with open(args.config, "rb") as f:
         config = tomllib.load(f)
         settings = Settings(**config)
 
-    # TODO: signal ちゃんとする
-    signal = Event()
     while True:
         target_windows: list[int] = []
 
@@ -182,9 +206,10 @@ def main() -> int:
         win32gui.EnumWindows(get_specific_window_callback, None)
         try:
             for window in target_windows:
-                translate_window(window, settings=settings, signal=signal)
+                translate_window(window, settings=settings)
         except KeyboardInterrupt:
-            print("interrupted")
-            signal.set()
+            logger.info("interrupted")
+            break
+        if not args.loop:
             break
     return 0
