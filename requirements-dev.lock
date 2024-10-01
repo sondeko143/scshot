@@ -14,6 +14,7 @@ bettercam==1.0.0
 cachetools==5.5.0
 certifi==2024.8.30
 charset-normalizer==3.3.2
+colorama==0.4.6
 comtypes==1.4.7
 google-api-core==2.20.0
 google-auth==2.35.0
@@ -25,13 +26,17 @@ grpc-google-iam-v1==0.13.1
 grpcio==1.66.2
 grpcio-status==1.66.2
 idna==3.10
+iniconfig==2.0.0
 numpy==2.1.1
 opencv-python==4.10.0.84
+packaging==24.1
 pillow==10.4.0
+pluggy==1.5.0
 proto-plus==1.24.0
 protobuf==5.28.2
 pyasn1==0.6.1
 pyasn1-modules==0.4.1
+pytest==8.3.3
 pywin32==306
 pyyaml==6.0.2
 requests==2.32.3

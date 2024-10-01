@@ -1,8 +1,9 @@
 import argparse
 import logging
+from pathlib import Path
 import sys
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import unescape
 from io import BytesIO
 from logging import getLogger
@@ -16,24 +17,27 @@ from google.cloud import vision  # type: ignore
 from google.cloud.translate_v3 import TranslateTextRequest, TranslationServiceClient
 from PIL import Image
 
+from scshot.history import History, HistoryDB, HistoryNotFound, HistoryFileError
+
 TRANSLATION_CACHE: dict[str, str] = {}
 
 logger = getLogger(__name__)
-handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.DEBUG)
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
 
 
 @dataclass
 class Settings:
-    text_ignore: list[str]
     target_window_title: str
-    target_language_code: str
-    language_codes_display: list[str]
-    language_codes_ignore: list[str]
-    display_code: str
     google_translate_api_project_name: str
+    text_ignore: list[str] = field(default_factory=list)
+    target_language_code: str = "en-US"
+    language_codes_display: list[str] = field(default_factory=lambda: ["en-US"])
+    language_codes_ignore: list[str] = field(default_factory=list)
+    history_db_dir: Path = Path("~/.cache/scshot/db")
+    display_code: str = """
+clear()
+for result in results:
+    print(f"{result.original}\\n->{result.translated}\\n")
+"""
 
 
 @dataclass
@@ -46,14 +50,21 @@ class Output:
     bottom: int
 
 
-def translate_text(text: str, settings: Settings):
+def translate_text(text: str, settings: Settings, db: HistoryDB):
     logger.debug("start thread: %s", text)
     if text in settings.text_ignore:
         return [text, ""]
     if text.isdigit():
         return [text, ""]
-    if text in TRANSLATION_CACHE:
-        return [text, TRANSLATION_CACHE[text]]
+
+    try:
+        history = db.get(text=text, tlc=settings.target_language_code)
+        logger.debug("found in histories: %s", text)
+        if history.slc in settings.language_codes_display:
+            return [text, history.translated]
+        return [text, ""]
+    except (HistoryNotFound, HistoryFileError):
+        pass
 
     client = TranslationServiceClient()
     request = TranslateTextRequest(
@@ -71,14 +82,13 @@ def translate_text(text: str, settings: Settings):
     dlc = result.detected_language_code
     translated = cast(str, unescape(result.translated_text))  # type: ignore
     logger.debug("translated: [%s] %s", dlc, translated)
+    db.insert(History(original=text, translated=translated, tlc=settings.target_language_code, slc=dlc))
     if dlc in settings.language_codes_display:
-        TRANSLATION_CACHE[text] = translated
         return [text, translated]
-    TRANSLATION_CACHE[text] = ""
     return [text, ""]
 
 
-def bulk_translate(texts: list[str], settings: Settings):
+def bulk_translate(texts: list[str], settings: Settings, db: HistoryDB):
     with ThreadPoolExecutor() as executor:
         futures: list[Future[list[str]]] = []
         try:
@@ -87,6 +97,7 @@ def bulk_translate(texts: list[str], settings: Settings):
                     translate_text,
                     text,
                     settings,
+                    db
                 )
                 for text in texts
             ]
@@ -104,7 +115,7 @@ def bulk_translate(texts: list[str], settings: Settings):
     return [{"original": t, "translated": translated} for t, translated in results]
 
 
-def detect_text(image: bytes, settings: Settings) -> list[Output]:
+def detect_text(image: bytes, settings: Settings, db: HistoryDB) -> list[Output]:
     """Detects text in the file."""
 
     client = vision.ImageAnnotatorClient()
@@ -139,7 +150,7 @@ def detect_text(image: bytes, settings: Settings) -> list[Output]:
                 bounds[block_text] = [left, top, right, bottom]
                 block_texts.append(block_text)
     logger.debug("detect %s", len(block_texts))
-    translateds = bulk_translate(block_texts, settings=settings)
+    translateds = bulk_translate(block_texts, settings=settings, db=db)
     translateds = [t for t in translateds if t["translated"]]
     outputs = [
         Output(
@@ -168,7 +179,7 @@ def display_results(results: list[Output], display_code: str):
     )
 
 
-def translate_window(hwnd: int, settings: Settings):
+def translate_window(hwnd: int, settings: Settings, db: HistoryDB):
     camera = bettercam.create()  # type: ignore
     rect = win32gui.GetWindowRect(hwnd)
     frame = camera.grab(rect)  # type: ignore
@@ -177,11 +188,15 @@ def translate_window(hwnd: int, settings: Settings):
     image = Image.fromarray(frame)  # type: ignore
     with BytesIO() as image_content:
         image.save(image_content, format="PNG")
-        results = detect_text(image_content.getvalue(), settings=settings)
+        results = detect_text(image_content.getvalue(), settings=settings, db=db)
     display_results(results, settings.display_code)
 
 
 def main() -> int:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
     parser = argparse.ArgumentParser(
         prog="scshot", description="Take a screenshot and translate texts"
     )
@@ -195,6 +210,7 @@ def main() -> int:
         config = tomllib.load(f)
         settings = Settings(**config)
 
+    db = HistoryDB(db_dir=settings.history_db_dir, logger=logger)
     while True:
         target_windows: list[int] = []
 
@@ -206,7 +222,7 @@ def main() -> int:
         win32gui.EnumWindows(get_specific_window_callback, None)
         try:
             for window in target_windows:
-                translate_window(window, settings=settings)
+                translate_window(window, settings=settings, db=db)
         except KeyboardInterrupt:
             logger.info("interrupted")
             break
