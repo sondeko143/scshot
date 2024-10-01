@@ -8,6 +8,7 @@ from html import unescape
 from io import BytesIO
 from logging import getLogger
 from os import system
+from time import sleep
 from typing import Any, cast
 
 import bettercam  # type: ignore
@@ -202,7 +203,7 @@ def main() -> int:
     )
     parser.add_argument("-c", "--config", required=True)
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("-l", "--loop", action="store_true")
+    parser.add_argument("-l", "--loop", default=-1.0, type=float)
     args = parser.parse_args()
     if args.verbose:
         logger.setLevel(logging.DEBUG)
@@ -226,6 +227,8 @@ def main() -> int:
         except KeyboardInterrupt:
             logger.info("interrupted")
             break
-        if not args.loop:
+        if args.loop < 0:
             break
+        logger.debug("sleep %s", args.loop)
+        sleep(args.loop)
     return 0
