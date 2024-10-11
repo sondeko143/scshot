@@ -1,0 +1,35 @@
+text_ignore = []
+
+target_window_title = "Game.exe"
+
+# ISO 639-1
+target_language_code = "ja-JP"
+
+# ISO 639-1
+language_codes_display = ["en"]
+
+language_codes_ignore = ["ja"]
+
+display_code = '''
+print('<!DOCTYPE html>')
+print('<html lang="jp">')
+print('<head>')
+print('    <meta charset="UTF-8">')
+print('    <meta name="viewport" content="width=device-width, initial-scale=1.0">')
+print('    <title>Document</title>')
+print('    <style>')
+print('        body {')
+print('            font-size: 24px;')
+print('        }')
+print('    </style>')
+print('</head>')
+print('<body>')
+print('    <div style="position: relative;">')
+for result in results:
+    print(f'<div style="left: {result.left}px; top: {result.top}px; width: {result.right - result.left}px; position: absolute; background-color: aliceblue;">{result.translated}</div>')
+print('    </div>')
+print('</body>')
+print('</html>')
+'''
+
+google_translate_api_project_name = "projects/sample"
