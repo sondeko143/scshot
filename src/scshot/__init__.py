@@ -1,13 +1,13 @@
 import argparse
 import logging
-from pathlib import Path
+import os
 import sys
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from html import unescape
 from io import BytesIO
 from logging import getLogger
-from os import system
+from pathlib import Path
 from time import sleep
 from typing import Any, cast
 
@@ -18,7 +18,7 @@ from google.cloud import vision  # type: ignore
 from google.cloud.translate_v3 import TranslateTextRequest, TranslationServiceClient
 from PIL import Image
 
-from scshot.history import History, HistoryDB, HistoryNotFound, HistoryFileError
+from scshot.history import History, HistoryDB, HistoryFileError, HistoryNotFound
 
 TRANSLATION_CACHE: dict[str, str] = {}
 
@@ -60,7 +60,7 @@ def translate_text(text: str, settings: Settings, db: HistoryDB):
 
     try:
         history = db.get(text=text, tlc=settings.target_language_code)
-        logger.debug("found in histories: %s", text)
+        logger.debug("found in histories: %s, %s", text, history.slc)
         if history.slc in settings.language_codes_display:
             return [text, history.translated]
         return [text, ""]
@@ -83,9 +83,17 @@ def translate_text(text: str, settings: Settings, db: HistoryDB):
     dlc = result.detected_language_code
     translated = cast(str, unescape(result.translated_text))  # type: ignore
     logger.debug("translated: [%s] %s", dlc, translated)
-    db.insert(History(original=text, translated=translated, tlc=settings.target_language_code, slc=dlc))
+    db.insert(
+        History(
+            original=text,
+            translated=translated,
+            tlc=settings.target_language_code,
+            slc=dlc,
+        )
+    )
     if dlc in settings.language_codes_display:
         return [text, translated]
+    logger.debug("Ignore text %s because %s is not display lc list.", text, dlc)
     return [text, ""]
 
 
@@ -94,13 +102,7 @@ def bulk_translate(texts: list[str], settings: Settings, db: HistoryDB):
         futures: list[Future[list[str]]] = []
         try:
             futures = [
-                executor.submit(
-                    translate_text,
-                    text,
-                    settings,
-                    db
-                )
-                for text in texts
+                executor.submit(translate_text, text, settings, db) for text in texts
             ]
             results = [future.result() for future in futures]
         except KeyboardInterrupt:
@@ -130,7 +132,7 @@ def detect_text(image: bytes, settings: Settings, db: HistoryDB) -> list[Output]
     bounds: dict[str, list[int]] = {}
     for page in document.pages:
         for block in page.blocks:
-            block_text = ""
+            block_text: list[str] = []
             for paragraph in block.paragraphs:
                 for word in paragraph.words:
                     if any(
@@ -140,16 +142,17 @@ def detect_text(image: bytes, settings: Settings, db: HistoryDB) -> list[Output]
                     ):
                         continue
                     for symbol in word.symbols:
-                        block_text += symbol.text
+                        block_text.append(symbol.text)
             if block_text:
+                joined_text = "".join(block_text)
                 xs = [int(v.x) for v in block.bounding_box.vertices]
                 ys = [int(v.y) for v in block.bounding_box.vertices]
                 left = min(xs)
                 top = min(ys)
                 right = max(xs)
                 bottom = max(ys)
-                bounds[block_text] = [left, top, right, bottom]
-                block_texts.append(block_text)
+                bounds[joined_text] = [left, top, right, bottom]
+                block_texts.append(joined_text)
     logger.debug("detect %s", len(block_texts))
     translateds = bulk_translate(block_texts, settings=settings, db=db)
     translateds = [t for t in translateds if t["translated"]]
@@ -169,7 +172,7 @@ def detect_text(image: bytes, settings: Settings, db: HistoryDB) -> list[Output]
 
 
 def clear():
-    system("cls")
+    os.system("cls")
 
 
 def display_results(results: list[Output], display_code: str):
@@ -182,8 +185,18 @@ def display_results(results: list[Output], display_code: str):
 
 def translate_window(hwnd: int, settings: Settings, db: HistoryDB):
     camera = bettercam.create()  # type: ignore
-    rect = win32gui.GetWindowRect(hwnd)
-    frame = camera.grab(rect)  # type: ignore
+    screen_width = cast(int, camera.width) # type: ignore
+    screen_height = cast(int, camera.height) # type: ignore
+    l, t, r, b = win32gui.GetWindowRect(hwnd)
+    if not screen_width >= r:
+        r = screen_width
+    if not l >= 0:
+        l = 0
+    if not screen_height >= b:
+        b = screen_height
+    if not t >= 0:
+        t = 0
+    frame = camera.grab((l, t, r, b))  # type: ignore
     if frame is None:
         return
     image = Image.fromarray(frame)  # type: ignore
@@ -193,7 +206,22 @@ def translate_window(hwnd: int, settings: Settings, db: HistoryDB):
     display_results(results, settings.display_code)
 
 
+def get_window_handlers(target_window_title: str):
+    target_windows: list[int] = []
+
+    def get_specific_window_callback(hwnd: int, _: Any):
+        name = win32gui.GetWindowText(hwnd)
+        logger.debug(name)
+        if name == target_window_title:
+            target_windows.append(hwnd)
+
+    win32gui.EnumWindows(get_specific_window_callback, None)
+    return target_windows
+
+
 def main() -> int:
+    if os.name == "nt":
+        sys.stdout.reconfigure(encoding="utf-8") # type: ignore
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
@@ -204,23 +232,19 @@ def main() -> int:
     parser.add_argument("-c", "--config", required=True)
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("-l", "--loop", default=-1.0, type=float)
+    parser.add_argument("-w", "--window", type=str)
     args = parser.parse_args()
     if args.verbose:
         logger.setLevel(logging.DEBUG)
     with open(args.config, "rb") as f:
         config = tomllib.load(f)
         settings = Settings(**config)
+        if args.window:
+            settings.target_window_title = args.window
 
     db = HistoryDB(db_dir=settings.history_db_dir, logger=logger)
     while True:
-        target_windows: list[int] = []
-
-        def get_specific_window_callback(hwnd: int, _: Any):
-            name = win32gui.GetWindowText(hwnd)
-            if name == settings.target_window_title:
-                target_windows.append(hwnd)
-
-        win32gui.EnumWindows(get_specific_window_callback, None)
+        target_windows = get_window_handlers(settings.target_window_title)
         try:
             for window in target_windows:
                 translate_window(window, settings=settings, db=db)
