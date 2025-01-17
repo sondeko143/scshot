@@ -1,7 +1,5 @@
 text_ignore = []
 
-target_window_title = "Game.exe"
-
 # ISO 639-1
 target_language_code = "ja-JP"
 
@@ -11,25 +9,25 @@ language_codes_display = ["en"]
 language_codes_ignore = ["ja"]
 
 display_code = '''
-print('<!DOCTYPE html>')
-print('<html lang="jp">')
-print('<head>')
-print('    <meta charset="UTF-8">')
-print('    <meta name="viewport" content="width=device-width, initial-scale=1.0">')
-print('    <title>Document</title>')
-print('    <style>')
-print('        body {')
-print('            font-size: 24px;')
-print('        }')
-print('    </style>')
-print('</head>')
-print('<body>')
-print('    <div style="position: relative;">')
+writeln('<!DOCTYPE html>', 'w')
+writeln('<html lang="jp">')
+writeln('<head>')
+writeln('    <meta charset="UTF-8">')
+writeln('    <meta name="viewport" content="width=device-width, initial-scale=1.0">')
+writeln('    <title>Document</title>')
+writeln('    <style>')
+writeln('        body {')
+writeln('            font-size: 24px;')
+writeln('        }')
+writeln('    </style>')
+writeln('</head>')
+writeln('<body>')
+writeln('    <div style="position: relative;">')
 for result in results:
-    print(f'<div style="left: {result.left}px; top: {result.top}px; width: {result.right - result.left}px; position: absolute; background-color: aliceblue;">{result.translated}</div>')
-print('    </div>')
-print('</body>')
-print('</html>')
+    writeln(f'<div style="left: {result.left}px; top: {result.top}px; width: {result.right - result.left}px; position: absolute; background-color: aliceblue;">{result.translated}</div>')
+writeln('    </div>')
+writeln('</body>')
+writeln('</html>')
 '''
 
-google_translate_api_project_name = "projects/sample"
+google_translate_api_project_name = "projects/rosy-hope-368115"

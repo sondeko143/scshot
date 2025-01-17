@@ -27,8 +27,8 @@ logger = getLogger(__name__)
 
 @dataclass
 class Settings:
-    target_window_title: str
     google_translate_api_project_name: str
+    target_window_title: str | None = None
     text_ignore: list[str] = field(default_factory=list)
     target_language_code: str = "en-US"
     language_codes_display: list[str] = field(default_factory=lambda: ["en-US"])
@@ -175,28 +175,24 @@ def clear():
     os.system("cls")
 
 
+def writeln(text: str, mode: str = "a"):
+    with open("index.html", mode, encoding="utf-8") as f:
+        f.write(text + "\n")
+
+
 def display_results(results: list[Output], display_code: str):
     exec(
         display_code,
         {"__builtins__": None},
-        {"print": print, "results": results, "clear": clear},
+        {"print": print, "writeln": writeln, "results": results, "clear": clear},
     )
 
 
 def translate_window(hwnd: int, settings: Settings, db: HistoryDB):
-    camera = bettercam.create()  # type: ignore
-    screen_width = cast(int, camera.width) # type: ignore
-    screen_height = cast(int, camera.height) # type: ignore
-    l, t, r, b = win32gui.GetWindowRect(hwnd)
-    if not screen_width >= r:
-        r = screen_width
-    if not l >= 0:
-        l = 0
-    if not screen_height >= b:
-        b = screen_height
-    if not t >= 0:
-        t = 0
-    frame = camera.grab((l, t, r, b))  # type: ignore
+    camera = cast(bettercam.BetterCam, bettercam.create())  # type: ignore
+    cl, ct, cr, cb = win32gui.GetClientRect(hwnd)
+    sl, st = win32gui.ClientToScreen(hwnd, (cl, ct))
+    frame = camera.grab((sl, st, sl + cr, st + cb))  # type: ignore
     if frame is None:
         return
     image = Image.fromarray(frame)  # type: ignore
@@ -206,22 +202,24 @@ def translate_window(hwnd: int, settings: Settings, db: HistoryDB):
     display_results(results, settings.display_code)
 
 
-def get_window_handlers(target_window_title: str):
+def get_window_handlers(target_window_title: str | None):
     target_windows: list[int] = []
 
-    def get_specific_window_callback(hwnd: int, _: Any):
-        name = win32gui.GetWindowText(hwnd)
-        logger.debug(name)
-        if name == target_window_title:
-            target_windows.append(hwnd)
+    if target_window_title:
 
-    win32gui.EnumWindows(get_specific_window_callback, None)
+        def get_specific_window_callback(hwnd: int, _: Any):
+            name = win32gui.GetWindowText(hwnd)
+            logger.debug(name)
+            if name == target_window_title:
+                target_windows.append(hwnd)
+
+        win32gui.EnumWindows(get_specific_window_callback, None)
+    else:
+        target_windows.append(win32gui.GetForegroundWindow())
     return target_windows
 
 
 def main() -> int:
-    if os.name == "nt":
-        sys.stdout.reconfigure(encoding="utf-8") # type: ignore
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG)
     logger.addHandler(handler)
