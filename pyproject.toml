@@ -13,6 +13,7 @@ dependencies = [
     "pillow>=10.4.0",
     "google-cloud-vision>=3.7.4",
     "google-cloud-translate>=3.16.0",
+    "imgkit>=1.2.3",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

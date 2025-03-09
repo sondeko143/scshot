@@ -4,7 +4,7 @@
 # last locked with the following flags:
 #   pre: false
 #   features: []
-#   all-features: false
+#   all-features: true
 #   with-sources: false
 #   generate-hashes: false
 #   universal: false
@@ -52,6 +52,8 @@ grpcio-status==1.66.2
     # via google-api-core
 idna==3.10
     # via requests
+imgkit==1.2.3
+    # via scshot
 iniconfig==2.0.0
     # via pytest
 numpy==2.1.1
@@ -91,5 +93,7 @@ requests==2.32.3
     # via google-api-core
 rsa==4.9
     # via google-auth
+six==1.17.0
+    # via imgkit
 urllib3==2.2.3
     # via requests

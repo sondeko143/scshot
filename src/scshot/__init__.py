@@ -1,4 +1,5 @@
 import argparse
+from functools import partial
 import logging
 import os
 import sys
@@ -17,6 +18,8 @@ import win32gui
 from google.cloud import vision  # type: ignore
 from google.cloud.translate_v3 import TranslateTextRequest, TranslationServiceClient
 from PIL import Image
+import imgkit
+
 
 from scshot.history import History, HistoryDB, HistoryFileError, HistoryNotFound
 
@@ -57,7 +60,6 @@ def translate_text(text: str, settings: Settings, db: HistoryDB):
         return [text, ""]
     if text.isdigit():
         return [text, ""]
-
     try:
         history = db.get(text=text, tlc=settings.target_language_code)
         logger.debug("found in histories: %s, %s", text, history.slc)
@@ -76,6 +78,7 @@ def translate_text(text: str, settings: Settings, db: HistoryDB):
     try:
         logger.debug("request translation: %s", text)
         result = client.translate_text(request=request)  # type: ignore
+        print(result)
     except CancelledError:
         logger.debug("canceled")
         return [text, ""]
@@ -102,7 +105,8 @@ def bulk_translate(texts: list[str], settings: Settings, db: HistoryDB):
         futures: list[Future[list[str]]] = []
         try:
             futures = [
-                executor.submit(translate_text, text, settings, db) for text in texts
+                executor.submit(translate_text, text, settings, db)
+                for text in texts
             ]
             results = [future.result() for future in futures]
         except KeyboardInterrupt:
@@ -115,7 +119,10 @@ def bulk_translate(texts: list[str], settings: Settings, db: HistoryDB):
                 logger.debug("join thread %s", thread)
                 thread.join()
             raise
-    return [{"original": t, "translated": translated} for t, translated in results]
+    return [{
+        "original": t,
+        "translated": translated
+    } for t, translated in results]
 
 
 def detect_text(image: bytes, settings: Settings, db: HistoryDB) -> list[Output]:
@@ -180,11 +187,21 @@ def writeln(text: str, mode: str = "a"):
         f.write(text + "\n")
 
 
-def display_results(results: list[Output], display_code: str):
+def to_img(width: int, height: int):
+    options = {
+        "transparent": '',
+        "format": "png",
+        "width": width,
+        "height": height
+    }
+    imgkit.from_file("index.html", "index.png", options=options)
+
+
+def display_results(results: list[Output], display_code: str, width: int, height: int):
     exec(
         display_code,
         {"__builtins__": None},
-        {"print": print, "writeln": writeln, "results": results, "clear": clear},
+        {"print": print, "writeln": writeln, "results": results, "clear": clear, "to_img": partial(to_img, width=width, height=height)},
     )
 
 
@@ -199,7 +216,7 @@ def translate_window(hwnd: int, settings: Settings, db: HistoryDB):
     with BytesIO() as image_content:
         image.save(image_content, format="PNG")
         results = detect_text(image_content.getvalue(), settings=settings, db=db)
-    display_results(results, settings.display_code)
+    display_results(results, settings.display_code, cr, cb)
 
 
 def get_window_handlers(target_window_title: str | None):
@@ -210,7 +227,7 @@ def get_window_handlers(target_window_title: str | None):
         def get_specific_window_callback(hwnd: int, _: Any):
             name = win32gui.GetWindowText(hwnd)
             logger.debug(name)
-            if name == target_window_title:
+            if target_window_title in name:
                 target_windows.append(hwnd)
 
         win32gui.EnumWindows(get_specific_window_callback, None)
